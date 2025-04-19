@@ -1,0 +1,16 @@
+services:
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: lgtm
+    ports:
+      - 3000:3000
+
+  nginx:
+    build: ./nginx
+    ports:
+      - 80:80
+
+  my-api:
+    build: .
+    environment:
+      OTLP_ENDPOINT: lgtm:4317
