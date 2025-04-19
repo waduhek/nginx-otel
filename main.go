@@ -7,45 +7,78 @@ import (
 	"net/http"
 	"os"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
+
+	"github.com/waduhek/nginxotel/telemetry"
 )
 
 func main() {
 	ctx := context.Background()
 
-	exporter, err := newOTLPExporter(ctx)
+	traceExporter, err := telemetry.NewOTLPTraceExporter(ctx)
 	if err != nil {
 		slog.Error("error while creating exporter", "err", err)
 		os.Exit(1)
 	}
 
-	tracerProvider := newTracerProvider(exporter)
+	tracerProvider := telemetry.NewTracerProvider(traceExporter)
 	defer tracerProvider.Shutdown(ctx)
 
-	propagator := newTextMapPropagator();
+	propagator := telemetry.NewTextMapPropagator()
+
+	loggerExporter, err := telemetry.NewOTLPLoggerExporter(ctx)
+	if err != nil {
+		slog.Error("error while creating log exporter", "err", err)
+		os.Exit(1)
+	}
+
+	loggerProvider, err := telemetry.NewLoggerProvider(loggerExporter)
+	if err != nil {
+		slog.Error("error while creating logger provider", "err", err)
+		os.Exit(1)
+	}
+	defer loggerProvider.Shutdown(ctx)
 
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetTextMapPropagator(propagator)
+	global.SetLoggerProvider(loggerProvider)
 
-    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		extractedCtx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	http.HandleFunc("/", handleRequest)
+	http.ListenAndServe(":8080", nil)
+}
 
-		newTraceCtx, span := tracerProvider.Tracer("api_tracer").Start(extractedCtx, "GET /")
-		span.End()
+func handleRequest(w http.ResponseWriter, r *http.Request) {
+	methodName := "github.com/waduhek/nginxotel.handleRequest"
 
-		carrier := propagation.HeaderCarrier{}
-		propagator.Inject(newTraceCtx, &carrier)
+	tracer := telemetry.GetTracer()
+	propagator := otel.GetTextMapPropagator()
+	logger := otelslog.NewLogger(methodName)
 
-		span.SetStatus(codes.Error, "request completed")
+	extractedCtx := propagator.Extract(
+		r.Context(),
+		propagation.HeaderCarrier(r.Header),
+	)
 
-		for key, value := range carrier {
-			w.Header().Add(key, value[0])
+	newTraceCtx, span := tracer.Start(extractedCtx, "GET /")
+	span.End()
+
+	carrier := make(propagation.HeaderCarrier)
+	propagator.Inject(newTraceCtx, &carrier)
+
+	span.SetStatus(codes.Error, "request completed")
+
+	for key, values := range carrier {
+		for _, value := range values {
+			w.Header().Add(key, value)
 		}
+	}
 
-		w.WriteHeader(200)
-		fmt.Fprintf(w, "200 OK")
-    })
-    http.ListenAndServe(":8080", nil)
+	logger.InfoContext(newTraceCtx, "request completed")
+
+	w.WriteHeader(200)
+	fmt.Fprintf(w, "200 OK")
 }
