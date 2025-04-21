@@ -64,12 +64,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	)
 
 	newTraceCtx, span := tracer.Start(extractedCtx, "GET /")
-	span.End()
+	defer span.End()
 
 	carrier := make(propagation.HeaderCarrier)
 	propagator.Inject(newTraceCtx, &carrier)
 
-	span.SetStatus(codes.Error, "request completed")
+	span.SetStatus(codes.Ok, "request completed")
 
 	for key, values := range carrier {
 		for _, value := range values {
