@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -49,4 +50,15 @@ func NewTextMapPropagator() propagation.TextMapPropagator {
 
 func GetTracer() trace.Tracer {
 	return otel.GetTracerProvider().Tracer(packageName)
+}
+
+func NewSpan(ctx context.Context, spanName string) (context.Context, trace.Span) {
+	hostName := os.Getenv("HOSTNAME")
+	tracer := GetTracer()
+
+	return tracer.Start(
+		ctx,
+		spanName,
+		trace.WithAttributes(semconv.ContainerID(hostName)),
+	)
 }

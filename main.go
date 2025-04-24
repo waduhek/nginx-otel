@@ -54,7 +54,6 @@ func main() {
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	methodName := "github.com/waduhek/nginxotel.handleRequest"
 
-	tracer := telemetry.GetTracer()
 	propagator := otel.GetTextMapPropagator()
 	logger := otelslog.NewLogger(methodName)
 
@@ -63,7 +62,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		propagation.HeaderCarrier(r.Header),
 	)
 
-	newTraceCtx, span := tracer.Start(extractedCtx, "GET /")
+	newTraceCtx, span := telemetry.NewSpan(extractedCtx, "GET /")
 	defer span.End()
 
 	carrier := make(propagation.HeaderCarrier)
