@@ -11,7 +11,9 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
 	"github.com/waduhek/nginxotel/telemetry"
 )
@@ -43,12 +45,47 @@ func main() {
 	}
 	defer loggerProvider.Shutdown(ctx)
 
+	metricsExporter, err := telemetry.NewOTLPMetricsExporter(ctx)
+	if err != nil {
+		slog.Error("error while creating metric exporter", "err", err)
+		os.Exit(1)
+	}
+	defer metricsExporter.Shutdown(ctx)
+
+	meterProvider := telemetry.NewMeterProvider(metricsExporter)
+
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetTextMapPropagator(propagator)
+	otel.SetMeterProvider(meterProvider)
 	global.SetLoggerProvider(loggerProvider)
 
 	http.HandleFunc("/", handleRequest)
 	http.ListenAndServe(":8080", nil)
+}
+
+func getAPICounter() (metric.Int64Counter, error) {
+	return telemetry.GetMeter().Int64Counter(
+		"api.calls",
+		metric.WithDescription("Number of API calls"),
+		metric.WithUnit("{call}"),
+	)
+}
+
+func incrementAPICallCount(ctx context.Context, logger telemetry.Logger) {
+	counter, err := getAPICounter()
+	if err != nil {
+		logger.ErrorContext(
+			ctx,
+			"error while getting api call counter",
+			"err", err,
+		)
+	} else {
+		counter.Add(
+			ctx,
+			1,
+			metric.WithAttributes(semconv.HTTPResponseStatusCode(200)),
+		)
+	}
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +101,8 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	newTraceCtx, span := telemetry.NewSpan(extractedCtx, "GET /")
 	defer span.End()
+
+	incrementAPICallCount(newTraceCtx, logger)
 
 	carrier := make(propagation.HeaderCarrier)
 	propagator.Inject(newTraceCtx, &carrier)
